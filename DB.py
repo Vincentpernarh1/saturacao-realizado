@@ -66,6 +66,88 @@ def get_latest_file(pattern, fallback=None):
         return fallback
     return None
 
+# ==================== DEBUG CONFIGURATION ====================
+# Add supplier codes here to debug mapping issues
+# You can use either COD IMS or COD FORNECEDOR (or both if a supplier has both codes)
+# Note: A single supplier can have BOTH COD IMS and COD FORNECEDOR
+# Example: Same supplier with COD IMS='33611' and COD FORNECEDOR='800030798'
+DEBUG_SUPPLIERS = ['33611', '800030798']  # Add your supplier codes here to debug (e.g., ['33611', '800030798'])
+
+# Add AGRUPAMENTO codes to filter debug output (optional, leave empty to see all)
+# Example: DEBUG_AGRUPAMENTO = ['30956207']
+DEBUG_AGRUPAMENTO = ['30956207']  # Add AGRUPAMENTO codes to filter debug output
+
+# Global list to store debug information
+debug_info = []
+
+def add_debug_info(supplier_code, stage, message, details=None, agrupamento=None):
+    """Add debug information for tracked suppliers."""
+    if not DEBUG_SUPPLIERS:
+        return
+    
+    # Check if this supplier should be debugged
+    supplier_str = str(supplier_code).strip()
+    should_debug = any(str(debug_code).strip() in supplier_str or supplier_str in str(debug_code).strip() 
+                       for debug_code in DEBUG_SUPPLIERS)
+    
+    # Also check AGRUPAMENTO filter if specified
+    if should_debug and DEBUG_AGRUPAMENTO and agrupamento:
+        agrupamento_str = str(agrupamento).strip()
+        should_debug = any(str(ag).strip() in agrupamento_str or agrupamento_str in str(ag).strip()
+                          for ag in DEBUG_AGRUPAMENTO)
+    
+    if should_debug:
+        debug_entry = {
+            'supplier': supplier_str,
+            'stage': stage,
+            'message': message,
+            'details': details or {}
+        }
+        debug_info.append(debug_entry)
+        
+        # Print for immediate visibility
+        print(f"\n[DEBUG] Supplier: {supplier_str} | Stage: {stage}")
+        print(f"        {message}")
+        if details:
+            for key, value in details.items():
+                print(f"        {key}: {value}")
+
+def print_debug_summary():
+    """Print a summary of all debug information collected."""
+    if not debug_info:
+        return
+    
+    print("\n" + "="*80)
+    print("DEBUG SUMMARY FOR TRACKED SUPPLIERS")
+    print("="*80)
+    
+    # Group by supplier
+    suppliers = {}
+    for entry in debug_info:
+        sup = entry['supplier']
+        if sup not in suppliers:
+            suppliers[sup] = []
+        suppliers[sup].append(entry)
+    
+    for supplier, entries in suppliers.items():
+        print(f"\n>>> SUPPLIER: {supplier}")
+        print("-" * 80)
+        for entry in entries:
+            print(f"  [{entry['stage']}] {entry['message']}")
+            if entry['details']:
+                for key, value in entry['details'].items():
+                    print(f"    - {key}: {value}")
+        print()
+    
+    print("="*80 + "\n")
+
+def clear_debug_info():
+    """Clear debug information."""
+    global debug_info
+    debug_info = []
+
+# ==================== END DEBUG CONFIGURATION ====================
+
 # Lista global para coletar erros e avisos para mostrar ao usuário
 erros_processamento = []
 
@@ -238,6 +320,7 @@ def Processar_Demandas(pasta_demandas="MVM", sheet_name=None):
     
     # Concatenate all DataFrames
     df_final = pd.concat(lista_dfs, ignore_index=True)
+    # df_final = df.groupby(colums['AGRUPAMENTO']).agg({'QTDE': 'sum'}).reset_index()
     
     # Basic data quality: convert DESENHO and QTDE to numeric
     if 'DESENHO' in df_final.columns:
@@ -594,12 +677,9 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
 
 
-
-
-
-
-
 def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=False,caminho_BD = 'BD'):
+
+
 
 
     def split_key_logic(code):
@@ -620,6 +700,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             return parts[0].strip()
     try:
 
+        # === Clear debug info at the start of processing ===
+        clear_debug_info()
 
         # --- Leitura dos arquivos ---
         template = pd.read_excel('Template.xlsx', dtype={'DESENHO': str})
@@ -682,7 +764,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Filter for EMPRESA = 1, 10.12 (not separate 10 and 12!)
         # Note: EMPRESA 10.12 is a single float value in the database
         if 'EMPRESA' in db_PN.columns:
-            db_PN = db_PN[db_PN['EMPRESA'].isin([1, 1.0, 10.12])]
+            db_PN = db_PN[db_PN['EMPRESA'].isin([1, 1.0, 10.12,191,191.0])]
         else:
             print("[WARNING] Column 'EMPRESA' not found in BD_CADASTRO_PN")
 
@@ -691,7 +773,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         
         # Filter for EMPRESA = 1, 10.12 (not separate 10 and 12!)
         if 'EMPRESA' in db_MDR.columns:
-            db_MDR = db_MDR[db_MDR['EMPRESA'].isin([1, 1.0, 10.12])]
+            db_MDR = db_MDR[db_MDR['EMPRESA'].isin([1, 1.0, 10.12,191,191.0])]
         else:
             print("[WARNING] Column 'EMPRESA' not found in BD_CADASTRO_MDR")
 
@@ -721,102 +803,45 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         # Mapas baseados na chave composta - already sorted by DESENHO ATUALIZAÇÃO descending
         # This ensures we always get the most recent non-null values
-        # Create composite key mappings for DESCRIÇÃO (COD FORNECEDOR + KEY where KEY = DESENHO + MDR)
-        db_PN_valid_desc = db_PN[db_PN['DESCRIÇÃO'].notna()].copy()
-        db_PN_valid_desc['FORNECEDOR_CHAVE'] = db_PN_valid_desc['COD FORNECEDOR'].apply(_codigo_principal)
-        db_PN_valid_desc['DESC_PN_KEY'] = ''
-        desc_pn_key_mask = db_PN_valid_desc['FORNECEDOR_CHAVE'].ne('') & db_PN_valid_desc['KEY'].notna()
-        db_PN_valid_desc.loc[desc_pn_key_mask, 'DESC_PN_KEY'] = (
-            db_PN_valid_desc.loc[desc_pn_key_mask, 'FORNECEDOR_CHAVE'].astype(str)
-            + '|'
-            + db_PN_valid_desc.loc[desc_pn_key_mask, 'KEY'].astype(str)
-        )
-        mapa_pn = db_PN_valid_desc[db_PN_valid_desc['DESC_PN_KEY'] != ''].drop_duplicates('DESC_PN_KEY', keep='first').set_index('DESC_PN_KEY')['DESCRIÇÃO']
-        mapa_pn_fallback = db_PN_valid_desc.drop_duplicates('KEY', keep='first').set_index('KEY')['DESCRIÇÃO']
+        db_PN_valid_desc = db_PN[db_PN['DESCRIÇÃO'].notna()]
+        mapa_pn = db_PN_valid_desc.drop_duplicates('KEY', keep='first').set_index('KEY')['DESCRIÇÃO']
         
         mapa_mdr = db_PN.drop_duplicates('KEY', keep='first').set_index('KEY')['MDR']
         
         # For QME and PESO, filter out invalid values before mapping
-        # Create composite key mappings for QME (COD FORNECEDOR + KEY where KEY = DESENHO + MDR)
-        db_PN_valid_qme = db_PN[db_PN['QME'].notna() & (db_PN['QME'] > 0)].copy()
-        db_PN_valid_qme['FORNECEDOR_CHAVE'] = db_PN_valid_qme['COD FORNECEDOR'].apply(_codigo_principal)
-        db_PN_valid_qme['QME_KEY'] = ''
-        qme_key_mask = db_PN_valid_qme['FORNECEDOR_CHAVE'].ne('') & db_PN_valid_qme['KEY'].notna()
-        db_PN_valid_qme.loc[qme_key_mask, 'QME_KEY'] = (
-            db_PN_valid_qme.loc[qme_key_mask, 'FORNECEDOR_CHAVE'].astype(str)
-            + '|'
-            + db_PN_valid_qme.loc[qme_key_mask, 'KEY'].astype(str)
-        )
-        mapa_qme = db_PN_valid_qme[db_PN_valid_qme['QME_KEY'] != ''].drop_duplicates('QME_KEY', keep='first').set_index('QME_KEY')['QME']
-        mapa_qme_fallback = db_PN_valid_qme.drop_duplicates('KEY', keep='first').set_index('KEY')['QME']
+        db_PN_valid_qme = db_PN[db_PN['QME'].notna() & (db_PN['QME'] > 0)]
+        mapa_qme = db_PN_valid_qme.drop_duplicates('KEY', keep='first').set_index('KEY')['QME']
         
-        # Create composite key mappings for PESO (COD FORNECEDOR + KEY where KEY = DESENHO + MDR)
+        # Peso PN mappings - both composite key (COD FORNECEDOR|KEY) and KEY-only fallback
         db_PN_valid_peso = db_PN[db_PN['PESO (Kg) MATERIAL'].notna()].copy()
-        db_PN_valid_peso['FORNECEDOR_CHAVE'] = db_PN_valid_peso['COD FORNECEDOR'].apply(_codigo_principal)
-        db_PN_valid_peso['PESO_PN_KEY'] = ''
-        peso_pn_key_mask = db_PN_valid_peso['FORNECEDOR_CHAVE'].ne('') & db_PN_valid_peso['KEY'].notna()
-        db_PN_valid_peso.loc[peso_pn_key_mask, 'PESO_PN_KEY'] = (
-            db_PN_valid_peso.loc[peso_pn_key_mask, 'FORNECEDOR_CHAVE'].astype(str)
-            + '|'
-            + db_PN_valid_peso.loc[peso_pn_key_mask, 'KEY'].astype(str)
-        )
-        mapa_peso_pn = db_PN_valid_peso[db_PN_valid_peso['PESO_PN_KEY'] != ''].drop_duplicates('PESO_PN_KEY', keep='first').set_index('PESO_PN_KEY')['PESO (Kg) MATERIAL']
+        db_PN_valid_peso['CHAVE_PESO_PN'] = db_PN_valid_peso['COD FORNECEDOR'].apply(_codigo_principal).astype(str) + '|' + db_PN_valid_peso['KEY'].astype(str)
+        mapa_peso_pn = db_PN_valid_peso.drop_duplicates('CHAVE_PESO_PN', keep='first').set_index('CHAVE_PESO_PN')['PESO (Kg) MATERIAL']
         mapa_peso_pn_fallback = db_PN_valid_peso.drop_duplicates('KEY', keep='first').set_index('KEY')['PESO (Kg) MATERIAL']
 
         # Mapas vindos do db_MDR - filter out nan values BEFORE creating mappings
         # Get the correct column name for FORNECEDOR
         coluna_fornecedor_mdr = 'CÓD. FORNECEDOR' if 'CÓD. FORNECEDOR' in db_MDR.columns else ('COD FORNECEDOR' if 'COD FORNECEDOR' in db_MDR.columns else None)
         
-        # Create composite key mappings for DESCRIÇÃO (COD FORNECEDOR + MDR)
-        db_MDR_valid_desc = db_MDR[db_MDR['DESCRIÇÃO'].notna()].copy()
-        db_MDR_valid_desc['MDR_CHAVE'] = db_MDR_valid_desc['MDR'].apply(_mdr_chave)
-        if coluna_fornecedor_mdr is not None:
-            db_MDR_valid_desc['FORNECEDOR_CHAVE'] = db_MDR_valid_desc[coluna_fornecedor_mdr].apply(_codigo_principal)
-            db_MDR_valid_desc['DESC_KEY'] = ''
-            desc_key_mask = db_MDR_valid_desc['FORNECEDOR_CHAVE'].ne('') & db_MDR_valid_desc['MDR_CHAVE'].ne('')
-            db_MDR_valid_desc.loc[desc_key_mask, 'DESC_KEY'] = (
-                db_MDR_valid_desc.loc[desc_key_mask, 'FORNECEDOR_CHAVE']
-                + '|'
-                + db_MDR_valid_desc.loc[desc_key_mask, 'MDR_CHAVE']
-            )
-            mapa_descricao_mdr = db_MDR_valid_desc[db_MDR_valid_desc['DESC_KEY'] != ''].drop_duplicates('DESC_KEY', keep='first').set_index('DESC_KEY')['DESCRIÇÃO']
-        else:
-            mapa_descricao_mdr = pd.Series(dtype=str)
-        mapa_descricao_mdr_fallback = db_MDR_valid_desc.drop_duplicates('MDR_CHAVE', keep='first').set_index('MDR_CHAVE')['DESCRIÇÃO']
+        db_MDR_valid_desc = db_MDR[db_MDR['DESCRIÇÃO'].notna()]
+        mapa_descricao_mdr = db_MDR_valid_desc.drop_duplicates('MDR', keep='first').set_index('MDR')['DESCRIÇÃO']
         
-        # Create composite key mappings for VOLUME (COD FORNECEDOR + MDR)
+        # Volume mappings - both composite key and MDR-only fallback
         db_MDR_valid_volume = db_MDR[db_MDR['VOLUME'].notna()].copy()
-        db_MDR_valid_volume['MDR_CHAVE'] = db_MDR_valid_volume['MDR'].apply(_mdr_chave)
-        if coluna_fornecedor_mdr is not None:
-            db_MDR_valid_volume['FORNECEDOR_CHAVE'] = db_MDR_valid_volume[coluna_fornecedor_mdr].apply(_codigo_principal)
-            db_MDR_valid_volume['VOLUME_KEY'] = ''
-            volume_key_mask = db_MDR_valid_volume['FORNECEDOR_CHAVE'].ne('') & db_MDR_valid_volume['MDR_CHAVE'].ne('')
-            db_MDR_valid_volume.loc[volume_key_mask, 'VOLUME_KEY'] = (
-                db_MDR_valid_volume.loc[volume_key_mask, 'FORNECEDOR_CHAVE']
-                + '|'
-                + db_MDR_valid_volume.loc[volume_key_mask, 'MDR_CHAVE']
-            )
-            mapa_volume = db_MDR_valid_volume[db_MDR_valid_volume['VOLUME_KEY'] != ''].drop_duplicates('VOLUME_KEY', keep='first').set_index('VOLUME_KEY')['VOLUME']
+        if coluna_fornecedor_mdr and coluna_fornecedor_mdr in db_MDR_valid_volume.columns:
+            db_MDR_valid_volume['CHAVE_VOLUME'] = db_MDR_valid_volume[coluna_fornecedor_mdr].apply(_codigo_principal).astype(str) + '|' + db_MDR_valid_volume['MDR'].apply(_mdr_chave)
+            mapa_volume = db_MDR_valid_volume.drop_duplicates('CHAVE_VOLUME', keep='first').set_index('CHAVE_VOLUME')['VOLUME']
         else:
-            mapa_volume = pd.Series(dtype=float)
-        mapa_volume_mdr = db_MDR_valid_volume.drop_duplicates('MDR_CHAVE', keep='first').set_index('MDR_CHAVE')['VOLUME']
+            mapa_volume = {}
+        mapa_volume_mdr = db_MDR_valid_volume.drop_duplicates('MDR', keep='first').set_index('MDR')['VOLUME']
         
-        # Create composite key mappings for MDR PESO (COD FORNECEDOR + MDR)
+        # Peso MDR mappings - both composite key and MDR-only fallback
         db_MDR_valid_peso = db_MDR[db_MDR['MDR PESO'].notna()].copy()
-        db_MDR_valid_peso['MDR_CHAVE'] = db_MDR_valid_peso['MDR'].apply(_mdr_chave)
-        if coluna_fornecedor_mdr is not None:
-            db_MDR_valid_peso['FORNECEDOR_CHAVE'] = db_MDR_valid_peso[coluna_fornecedor_mdr].apply(_codigo_principal)
-            db_MDR_valid_peso['PESO_KEY'] = ''
-            peso_key_mask = db_MDR_valid_peso['FORNECEDOR_CHAVE'].ne('') & db_MDR_valid_peso['MDR_CHAVE'].ne('')
-            db_MDR_valid_peso.loc[peso_key_mask, 'PESO_KEY'] = (
-                db_MDR_valid_peso.loc[peso_key_mask, 'FORNECEDOR_CHAVE']
-                + '|'
-                + db_MDR_valid_peso.loc[peso_key_mask, 'MDR_CHAVE']
-            )
-            mapa_peso_mdr = db_MDR_valid_peso[db_MDR_valid_peso['PESO_KEY'] != ''].drop_duplicates('PESO_KEY', keep='first').set_index('PESO_KEY')['MDR PESO']
+        if coluna_fornecedor_mdr and coluna_fornecedor_mdr in db_MDR_valid_peso.columns:
+            db_MDR_valid_peso['CHAVE_PESO_MDR'] = db_MDR_valid_peso[coluna_fornecedor_mdr].apply(_codigo_principal).astype(str) + '|' + db_MDR_valid_peso['MDR'].apply(_mdr_chave)
+            mapa_peso_mdr = db_MDR_valid_peso.drop_duplicates('CHAVE_PESO_MDR', keep='first').set_index('CHAVE_PESO_MDR')['MDR PESO']
         else:
-            mapa_peso_mdr = pd.Series(dtype=float)
-        mapa_peso_mdr_fallback = db_MDR_valid_peso.drop_duplicates('MDR_CHAVE', keep='first').set_index('MDR_CHAVE')['MDR PESO']
+            mapa_peso_mdr = {}
+        mapa_peso_mdr_fallback = db_MDR_valid_peso.drop_duplicates('MDR', keep='first').set_index('MDR')['MDR PESO']
         
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
@@ -843,11 +868,105 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
         # Passo 3: enriquecer com os mapas
         template['PESO_MAXIMO'] = template['VEÍCULO'].map(mapa_peso_max)
-        template['MAP_KEY'] = (template['COD IMS'].fillna(template['COD FORNECEDOR']).astype(str).str.split('/').str[0] )
-
-       
-        template['MAP_KEY'] = pd.to_numeric(template['MAP_KEY'], errors='coerce')
-        template['FORNECEDOR'] = template['MAP_KEY'].map(mapa_fornecedores)
+        
+        # === NEW LOGIC: Determine which code (COD FORNECEDOR or COD IMS) works for each supplier ===
+        # This ensures we use the SAME code consistently for ALL lookups
+        def determine_supplier_code(row):
+            """
+            Try both COD FORNECEDOR and COD IMS to see which one exists in BD_PN.
+            Return the code that works, along with which field it came from.
+            """
+            cod_forn = row.get('COD FORNECEDOR')
+            cod_ims = row.get('COD IMS')
+            agrupamento = row.get('AGRUPAMENTO')
+            
+            # Try COD FORNECEDOR first
+            if pd.notna(cod_forn):
+                candidatos_forn = _normalizar_codigos_campo(cod_forn)
+                for codigo in candidatos_forn:
+                    codigo_chave = _codigo_principal(codigo)
+                    if codigo_chave:
+                        try:
+                            codigo_num = float(codigo_chave)
+                            if codigo_num in mapa_fornecedores.index:
+                                # Found in BD_PN using COD FORNECEDOR
+                                for debug_code in DEBUG_SUPPLIERS:
+                                    if str(debug_code) in str(cod_forn) or str(debug_code) in str(cod_ims):
+                                        add_debug_info(
+                                            debug_code,
+                                            "SUPPLIER_CODE_DETERMINATION",
+                                            f"Determined supplier code for DESENHO {row.get('DESENHO')}",
+                                            {
+                                                'AGRUPAMENTO': agrupamento,
+                                                'COD FORNECEDOR': cod_forn,
+                                                'COD IMS': cod_ims,
+                                                'Code that works': codigo_chave,
+                                                'Source': 'COD FORNECEDOR',
+                                                'Status': '✓ Found in BD_PN - will use COD FORNECEDOR for all lookups'
+                                            },
+                                            agrupamento=agrupamento
+                                        )
+                                        break
+                                return pd.Series({'WORKING_CODE': codigo_chave, 'CODE_SOURCE': 'COD_FORNECEDOR'})
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Try COD IMS as fallback
+            if pd.notna(cod_ims):
+                candidatos_ims = _normalizar_codigos_campo(cod_ims)
+                for codigo in candidatos_ims:
+                    codigo_chave = _codigo_principal(codigo)
+                    if codigo_chave:
+                        try:
+                            codigo_num = float(codigo_chave)
+                            if codigo_num in mapa_fornecedores.index:
+                                # Found in BD_PN using COD IMS
+                                for debug_code in DEBUG_SUPPLIERS:
+                                    if str(debug_code) in str(cod_forn) or str(debug_code) in str(cod_ims):
+                                        add_debug_info(
+                                            debug_code,
+                                            "SUPPLIER_CODE_DETERMINATION",
+                                            f"Determined supplier code for DESENHO {row.get('DESENHO')}",
+                                            {
+                                                'AGRUPAMENTO': agrupamento,
+                                                'COD FORNECEDOR': cod_forn,
+                                                'COD IMS': cod_ims,
+                                                'Code that works': codigo_chave,
+                                                'Source': 'COD IMS',
+                                                'Status': '✓ Found in BD_PN - will use COD IMS for all lookups'
+                                            },
+                                            agrupamento=agrupamento
+                                        )
+                                        break
+                                return pd.Series({'WORKING_CODE': codigo_chave, 'CODE_SOURCE': 'COD_IMS'})
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Neither code found in BD_PN
+            for debug_code in DEBUG_SUPPLIERS:
+                if str(debug_code) in str(cod_forn) or str(debug_code) in str(cod_ims):
+                    add_debug_info(
+                        debug_code,
+                        "SUPPLIER_CODE_DETERMINATION",
+                        f"Could not determine supplier code for DESENHO {row.get('DESENHO')}",
+                        {
+                            'AGRUPAMENTO': agrupamento,
+                            'COD FORNECEDOR': cod_forn,
+                            'COD IMS': cod_ims,
+                            'Status': '✗ Neither code found in BD_PN - lookups will fail'
+                        },
+                        agrupamento=agrupamento
+                    )
+                    break
+            
+            return pd.Series({'WORKING_CODE': np.nan, 'CODE_SOURCE': None})
+        
+        # Determine which code works for each row
+        template[['WORKING_CODE', 'CODE_SOURCE']] = template.apply(determine_supplier_code, axis=1)
+        
+        # Use the working code for FORNECEDOR mapping
+        template['WORKING_CODE_NUMERIC'] = pd.to_numeric(template['WORKING_CODE'], errors='coerce')
+        template['FORNECEDOR'] = template['WORKING_CODE_NUMERIC'].map(mapa_fornecedores)
        
         # Clean up FORNECEDOR column - remove .0 suffix if it exists (when mapping fails, it might keep numeric values)
         if 'FORNECEDOR' in template.columns:
@@ -855,79 +974,12 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             # If FORNECEDOR is 'nan', replace with empty string
             template['FORNECEDOR'] = template['FORNECEDOR'].replace('nan', '')
        
-        template = template.drop(columns=['MAP_KEY'])
-       
-        # Use COD IMS + KEY as the primary descrição material key, trying every IMS code before
-        # falling back to COD FORNECEDOR and, if needed, KEY-only.
-        def resolver_descricao_material(row):
-            key = row.get('KEY')
-            if pd.isna(key) or str(key).strip() == '':
-                return np.nan
-            
-            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
-
-            if not candidatos:
-                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
-
-            for codigo in candidatos:
-                codigo_chave = _codigo_principal(codigo)
-                if codigo_chave:
-                    chave_completa = f"{codigo_chave}|{key}"
-                    descricao = mapa_pn.get(chave_completa, np.nan)
-                    if pd.notna(descricao):
-                        return descricao
-
-            descricao_fallback = mapa_pn_fallback.get(key, np.nan)
-            return descricao_fallback
-
-        template['DESCRIÇÃO MATERIAL'] = template.apply(resolver_descricao_material, axis=1)
+        template['DESCRIÇÃO MATERIAL'] = template['KEY'].map(mapa_pn)
         template['MDR'] = template['KEY'].map(mapa_mdr)  # reforça MDR correto do KEY
         
-        # Use COD IMS + MDR as the primary descrição key, trying every IMS code before
-        # falling back to COD FORNECEDOR and, if needed, MDR-only.
-        def resolver_descricao(row):
-            mdr_chave = _mdr_chave(row.get('MDR'))
-            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
-
-            if not candidatos:
-                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
-
-            for codigo in candidatos:
-                chave = _chave_fornecedor_mdr(codigo, mdr_chave)
-                if chave:
-                    descricao = mapa_descricao_mdr.get(chave, np.nan)
-                    if pd.notna(descricao):
-                        return descricao
-
-            descricao_fallback = mapa_descricao_mdr_fallback.get(mdr_chave, np.nan)
-            return descricao_fallback
-
-        template['DESCRIÇÃO DA EMBALAGEM'] = template.apply(resolver_descricao, axis=1)
+        template['DESCRIÇÃO DA EMBALAGEM'] = template['MDR'].map(mapa_descricao_mdr)
         
-        # Use COD IMS + KEY as the primary QME key, trying every IMS code before
-        # falling back to COD FORNECEDOR and, if needed, KEY-only.
-        def resolver_qme(row):
-            key = row.get('KEY')
-            if pd.isna(key) or str(key).strip() == '':
-                return np.nan
-            
-            candidatos = _normalizar_codigos_campo(row.get('COD IMS'))
-
-            if not candidatos:
-                candidatos = _normalizar_codigos_campo(row.get('COD FORNECEDOR'))
-
-            for codigo in candidatos:
-                codigo_chave = _codigo_principal(codigo)
-                if codigo_chave:
-                    chave_completa = f"{codigo_chave}|{key}"
-                    qme = mapa_qme.get(chave_completa, np.nan)
-                    if pd.notna(qme):
-                        return qme
-
-            qme_fallback = mapa_qme_fallback.get(key, np.nan)
-            return qme_fallback
-
-        template['QME'] = template.apply(resolver_qme, axis=1)
+        template['QME'] = template['KEY'].map(mapa_qme)
 
         # Ensure QME is valid (not zero, not NaN) before division
         # template['QME'] = template['QME'].fillna(1)  # Replace NaN with 1 to avoid division issues
@@ -948,6 +1000,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Clean up any infinity values in QTD EMBALAGENS
         template['QTD EMBALAGENS'] = template['QTD EMBALAGENS'].replace([np.inf, -np.inf], np.nan).fillna(0)
 
+        # === RESOLVER FUNCTIONS - Create intermediate Series for calculations ===
         # Use COD IMS + MDR as the primary volume key, trying every IMS code before
         # falling back to COD FORNECEDOR and, if needed, MDR-only.
         def resolver_volume(row):
@@ -982,7 +1035,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Only calculate M³ if volume_info was valid
         if not volume_info.empty and 'VOLUME_UNITARIO' in volume_info.columns:
             template['M³'] = round(template['QTD EMBALAGENS'] * volume_por_mdr, 3)
-        
         
         # Use COD IMS + KEY as the primary peso material key, trying every IMS code before
         # falling back to COD FORNECEDOR and, if needed, KEY-only.
@@ -1037,6 +1089,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['PESO MAT'] = template['PESO MAT'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['PESO MDR'] = template['PESO MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
         template['PESO TOTAL'] = round(template['PESO MAT'] + template['PESO MDR'], 1)
+
+
 
         debug_fornecedor = ''
         if 'COD FORNECEDOR' in template.columns:
@@ -1115,8 +1169,11 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Ensure COD FLUXO exists (older Template.xlsx files may not have it)
         if 'COD FLUXO' not in template.columns:
             template['COD FLUXO'] = None
-        
-        template = template[['AGRUPAMENTO', 'COD IMS','COD FORNECEDOR', 'FORNECEDOR', 'DESENHO', 'QTDE','PLANTA', 'DESCRIÇÃO MATERIAL',
+
+        if 'DATA COLETA' not in template.columns:
+            template['DATA COLETA'] = None
+
+        template = template[['AGRUPAMENTO', 'DATA COLETA', 'COD IMS','COD FORNECEDOR', 'FORNECEDOR', 'DESENHO', 'QTDE','PLANTA', 'DESCRIÇÃO MATERIAL',
                              'MDR', 'DESCRIÇÃO DA EMBALAGEM', 'QME', 'QTD EMBALAGENS', 'TIPO SATURACAO',
                              'VEÍCULO', 'M³', 'PESO MAT', 'PESO MDR', 'PESO TOTAL', 'PESO_MAXIMO']]
         
@@ -1525,6 +1582,9 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                             print(f"[INFO] PNs não cadastrados salvos em: {tracking_file}")
                         except Exception as e:
                             adicionar_erro(f"Erro ao salvar log de PNs não cadastrados: {str(e)}", "AVISO")
+        
+        # === Print debug summary at the end of processing ===
+        print_debug_summary()
 
     except Exception as e:
         adicionar_erro(f"Erro crítico ao processar informações: {str(e)}", "ERRO")
@@ -1533,22 +1593,18 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
 
 
 def consolidar_dados(use_manual=False, manual_veiculo=None):
-    # === CONFIGURATION: Static Cargas Adjustment ===
-    use_static_adjustment = 1  # Set to 1 to activate, 0 to deactivate
-    
-    static_adjustments = {
-        '800002365': +0,
-    }
-    # ================================================
-    
     template = pd.read_excel('VIAJANTE.xlsx', sheet_name='Template Completo')
 
     # Filtra linhas com quantidade válida e prepara as colunas
     template = template[template['QTDE'] > 0].copy()
     
-    # Ensure COD IMS column exists (for backward compatibility)
+    # Ensure columns exist (for backward compatibility)
     if 'COD IMS' not in template.columns:
         template['COD IMS'] = ""
+    if 'DATA COLETA' not in template.columns:
+        template['DATA COLETA'] = ""
+    if 'PLANTA' not in template.columns:
+        template['PLANTA'] = ""
     
     # Clean up COD FORNECEDOR - remove .0 suffix before converting to string
     template['COD FORNECEDOR'] = template['COD FORNECEDOR'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -1577,6 +1633,9 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
                     out_template.to_excel(writer, sheet_name='Template Completo', index=False)
         except Exception:
             pass
+
+    # Resolve 'VEÍCULO' or 'VEICULO' column name
+    veiculo_col = 'VEICULO' if 'VEICULO' in template.columns else ('VEÍCULO' if 'VEÍCULO' in template.columns else None)
 
     # Build vehicle code -> display name mapping (if BD/VEÍCULOS exists)
     code_to_vehicle_name = {}
@@ -1618,80 +1677,69 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
     dados_volume = []
 
-    # Group the template by AGRUPAMENTO
-    agrupamentos = template['AGRUPAMENTO'].dropna().unique()
+    # Group by combination of Supplier and Agrupamento to avoid merging different suppliers
+    group_cols = ['AGRUPAMENTO', 'DATA COLETA', 'COD IMS', 'COD FORNECEDOR', 'FORNECEDOR', 'PLANTA']
+    if 'TIPO SATURACAO' in template.columns:
+        group_cols.append('TIPO SATURACAO')
+    if veiculo_col:
+        group_cols.append(veiculo_col)
+
+    # We fillna to ensure groupby works properly on these columns
+    for col in group_cols:
+        template[col] = template[col].fillna('')
+
+    grouped = template.groupby(group_cols)
     
-    for cod_dest in agrupamentos:
-        if str(cod_dest).lower() == 'nan':
-            continue
-            
-        mask_template = template['AGRUPAMENTO'] == cod_dest
-        linhas_rota = template[mask_template]
-
-        volume_total = linhas_rota['M³'].sum()
-        peso_total = linhas_rota['PESO TOTAL'].sum()
-        embalagens_total = linhas_rota['QTD EMBALAGENS'].sum()
-
-        tipo_saturacao = linhas_rota['TIPO SATURACAO'].iloc[0] if 'TIPO SATURACAO' in linhas_rota.columns and not linhas_rota['TIPO SATURACAO'].empty else 'VOLUME'
-        veiculo_base = linhas_rota['VEICULO'].iloc[0] if 'VEICULO' in linhas_rota.columns and not linhas_rota['VEICULO'].empty else linhas_rota.get('VEÍCULO', pd.Series([None])).iloc[0]
-
-        if pd.notna(tipo_saturacao) and 'VOLUME' in str(tipo_saturacao).upper().strip():
-            saturacao_total = linhas_rota['SAT VOLUME (%)'].sum() if 'SAT VOLUME (%)' in linhas_rota.columns else 0
-        else:
-            saturacao_total = linhas_rota['SAT PESO (%)'].sum() if 'SAT PESO (%)' in linhas_rota.columns else 0
-
-        nomes_ordenados = linhas_rota['FORNECEDOR'].dropna().drop_duplicates().tolist()
-        cods_fornecedores = linhas_rota['COD FORNECEDOR'].dropna().drop_duplicates().tolist()
+    for name, group in grouped:
+        # name is a tuple matching group_cols
+        group_dict = dict(zip(group_cols, name))
         
-        # Join COD IMS if present
-        if 'COD IMS' in linhas_rota.columns:
-            ims_list = linhas_rota['COD IMS'].dropna().drop_duplicates().tolist()
-            ims_list = [str(x) for x in ims_list if str(x).strip() and str(x).strip() != '0' and str(x).lower() != 'nan']
-            ims_str = '/'.join(ims_list)
-        else:
-            ims_str = ''
-
-        cargas = math.ceil(saturacao_total / 100) if saturacao_total > 0 else 0
-
-        # Apply static adjustment if enabled
-        if use_static_adjustment == 1:
-            for supplier_code in cods_fornecedores:
-                if supplier_code in static_adjustments:
-                    adjustment = static_adjustments[supplier_code]
-                    cargas = max(0, int(cargas + adjustment))
-
-        coluna_sat = 'SAT VOLUME (%)' if pd.notna(tipo_saturacao) and 'VOLUME' in str(tipo_saturacao).upper().strip() else 'SAT PESO (%)'
+        volume_total = group['M³'].sum() if 'M³' in group.columns else 0
+        peso_total = group['PESO TOTAL'].sum() if 'PESO TOTAL' in group.columns else 0
+        embalagens_total = group['QTD EMBALAGENS'].sum() if 'QTD EMBALAGENS' in group.columns else 0
         
-        total_desenhos = linhas_rota['DESENHO'].nunique()
-        if coluna_sat in linhas_rota.columns:
-            desenhos_apurados = linhas_rota[linhas_rota[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
+        tipo_saturacao = group_dict.get('TIPO SATURACAO', 'VOLUME')
+        
+        if 'VOLUME' in str(tipo_saturacao).upper().strip():
+            saturacao_total = group['SAT VOLUME (%)'].sum() if 'SAT VOLUME (%)' in group.columns else 0
+        else:
+            saturacao_total = group['SAT PESO (%)'].sum() if 'SAT PESO (%)' in group.columns else 0
+
+        # Calculate Apuração MDR
+        total_desenhos = group['DESENHO'].nunique() if 'DESENHO' in group.columns else 0
+        coluna_sat = 'SAT VOLUME (%)' if 'VOLUME' in str(tipo_saturacao).upper().strip() else 'SAT PESO (%)'
+        if coluna_sat in group.columns:
+            desenhos_apurados = group[group[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
         else:
             desenhos_apurados = 0
-
+            
         perc_mdr = round((desenhos_apurados / total_desenhos) * 100, 1) if total_desenhos else 0.0
         
+        # Vehicle resolution
+        veiculo_base = group_dict.get(veiculo_col, '')
         veiculo_final = manual_veiculo if use_manual and manual_veiculo is not None else veiculo_base
-
         veiculo_display = veiculo_final
         try:
-            code_int = int(veiculo_final)
-            veiculo_display = code_to_vehicle_name.get(code_int, veiculo_final)
+            if str(veiculo_final).strip() != '':
+                code_int = int(float(veiculo_final))
+                veiculo_display = code_to_vehicle_name.get(code_int, veiculo_final)
         except Exception:
             veiculo_display = veiculo_final
-                
+
         dados_volume.append({
-            'IMS': ims_str,
-            'Cód Fornecedor': ', '.join(cods_fornecedores),
-            'Fornecedores': ', '.join(nomes_ordenados),
-            'Agrupamento': cod_dest,
-            'Veículo Principal': veiculo_display,
-            'Tipo de Saturação': str(tipo_saturacao) if pd.notna(tipo_saturacao) else '',
+            'AGRUPAMENTO': group_dict.get('AGRUPAMENTO', ''),
+            'DATA COLETA': group_dict.get('DATA COLETA', ''),
+            'COD IMS': group_dict.get('COD IMS', ''),
+            'COD FORNECEDOR': group_dict.get('COD FORNECEDOR', ''),
+            'FORNECEDOR': group_dict.get('FORNECEDOR', ''),
+            'VEÍCULO': veiculo_display,
+            'TIPO DE SATURAÇÃO': tipo_saturacao,
+            'SATURAÇÃO TOTAL': round(saturacao_total, 2),
             'M³': round(volume_total, 3),
-            'Sat.': round(saturacao_total, 2),
-            'Cargas': cargas,
-            'Peso Total (kg)': round(peso_total, 1),
-            'Embalagens Total': int(embalagens_total),
-            'Apuração_MDR': perc_mdr
+            'PESO': round(peso_total, 1),
+            'Embalagens': int(embalagens_total),
+            'APURAÇÃO MDR': perc_mdr,
+            'PLANTA': group_dict.get('PLANTA', '')
         })
 
     df_volume = pd.DataFrame(dados_volume)
