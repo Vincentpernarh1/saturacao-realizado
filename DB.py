@@ -71,11 +71,11 @@ def get_latest_file(pattern, fallback=None):
 # You can use either COD IMS or COD FORNECEDOR (or both if a supplier has both codes)
 # Note: A single supplier can have BOTH COD IMS and COD FORNECEDOR
 # Example: Same supplier with COD IMS='33611' and COD FORNECEDOR='800030798'
-DEBUG_SUPPLIERS = ['33611', '800030798']  # Add your supplier codes here to debug (e.g., ['33611', '800030798'])
+DEBUG_SUPPLIERS = ['12345','800002731']  # Add your supplier codes here to debug (e.g., ['33611', '800030798'])
 
 # Add AGRUPAMENTO codes to filter debug output (optional, leave empty to see all)
 # Example: DEBUG_AGRUPAMENTO = ['30956207']
-DEBUG_AGRUPAMENTO = ['30956207']  # Add AGRUPAMENTO codes to filter debug output
+DEBUG_AGRUPAMENTO = ['30952101']  # Add AGRUPAMENTO codes to filter debug output
 
 # Global list to store debug information
 debug_info = []
@@ -825,30 +825,78 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         db_MDR_valid_desc = db_MDR[db_MDR['DESCRIÇÃO'].notna()]
         mapa_descricao_mdr = db_MDR_valid_desc.drop_duplicates('MDR', keep='first').set_index('MDR')['DESCRIÇÃO']
         
-        # Volume mappings - both composite key and MDR-only fallback
+       
+       
+       
+      # Volume mappings - both composite key and MDR-only fallback
         db_MDR_valid_volume = db_MDR[db_MDR['VOLUME'].notna()].copy()
+
+        db_MDR_valid_volume['MDR_CHAVE'] = (
+            db_MDR_valid_volume['MDR'].apply(_mdr_chave)
+        )
+
         if coluna_fornecedor_mdr and coluna_fornecedor_mdr in db_MDR_valid_volume.columns:
-            db_MDR_valid_volume['CHAVE_VOLUME'] = db_MDR_valid_volume[coluna_fornecedor_mdr].apply(_codigo_principal).astype(str) + '|' + db_MDR_valid_volume['MDR'].apply(_mdr_chave)
-            mapa_volume = db_MDR_valid_volume.drop_duplicates('CHAVE_VOLUME', keep='first').set_index('CHAVE_VOLUME')['VOLUME']
+            db_MDR_valid_volume['CHAVE_VOLUME'] = (
+                db_MDR_valid_volume[coluna_fornecedor_mdr]
+                .apply(_codigo_principal)
+                .astype(str)
+                + '|'
+                + db_MDR_valid_volume['MDR_CHAVE']
+            )
+
+            mapa_volume = (
+                db_MDR_valid_volume
+                .drop_duplicates('CHAVE_VOLUME', keep='first')
+                .set_index('CHAVE_VOLUME')['VOLUME']
+            )
         else:
             mapa_volume = {}
-        mapa_volume_mdr = db_MDR_valid_volume.drop_duplicates('MDR', keep='first').set_index('MDR')['VOLUME']
-        
-        # Peso MDR mappings - both composite key and MDR-only fallback
+
+        mapa_volume_mdr = (
+            db_MDR_valid_volume
+            .drop_duplicates('MDR_CHAVE', keep='first')
+            .set_index('MDR_CHAVE')['VOLUME']
+        )
+                        
+                
+                
+                
+                
+                
+       
+       
+       # Peso MDR mappings - both composite key and MDR-only fallback
         db_MDR_valid_peso = db_MDR[db_MDR['MDR PESO'].notna()].copy()
+
         if coluna_fornecedor_mdr and coluna_fornecedor_mdr in db_MDR_valid_peso.columns:
-            db_MDR_valid_peso['CHAVE_PESO_MDR'] = db_MDR_valid_peso[coluna_fornecedor_mdr].apply(_codigo_principal).astype(str) + '|' + db_MDR_valid_peso['MDR'].apply(_mdr_chave)
-            mapa_peso_mdr = db_MDR_valid_peso.drop_duplicates('CHAVE_PESO_MDR', keep='first').set_index('CHAVE_PESO_MDR')['MDR PESO']
+            db_MDR_valid_peso['CHAVE_PESO_MDR'] = (
+                db_MDR_valid_peso[coluna_fornecedor_mdr]
+                .apply(_codigo_principal)
+                .astype(str)
+                + '|'
+                + db_MDR_valid_peso['MDR'].apply(_mdr_chave)
+            )
+
+            mapa_peso_mdr = (
+                db_MDR_valid_peso
+                .drop_duplicates('CHAVE_PESO_MDR', keep='first')
+                .set_index('CHAVE_PESO_MDR')['MDR PESO']
+            )
         else:
             mapa_peso_mdr = {}
-        mapa_peso_mdr_fallback = db_MDR_valid_peso.drop_duplicates('MDR', keep='first').set_index('MDR')['MDR PESO']
+
+        mapa_peso_mdr_fallback = (
+            db_MDR_valid_peso
+            .drop_duplicates('MDR', keep='first')
+            .set_index('MDR')['MDR PESO']
+        )
+
+
+
         
         mapa_peso_max = db_veiculos.set_index('COD VEICULO')['PESO MAXIMO']
 
-        # keep template VEICULO as-is here; Template.xlsx will be
-        # updated by input_demanda() when the user forces manual vehicle.
-
-        # --- Enriquecimento do template ---
+       
 
         # Passo 1: primeiro trazer MDR pelo DESENHO, para podermos montar a KEY
         # Filter out nan MDR values and use most recent (already sorted by DESENHO ATUALIZAÇÃO)
@@ -880,38 +928,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             cod_ims = row.get('COD IMS')
             agrupamento = row.get('AGRUPAMENTO')
             
-            # Try COD FORNECEDOR first
-            if pd.notna(cod_forn):
-                candidatos_forn = _normalizar_codigos_campo(cod_forn)
-                for codigo in candidatos_forn:
-                    codigo_chave = _codigo_principal(codigo)
-                    if codigo_chave:
-                        try:
-                            codigo_num = float(codigo_chave)
-                            if codigo_num in mapa_fornecedores.index:
-                                # Found in BD_PN using COD FORNECEDOR
-                                for debug_code in DEBUG_SUPPLIERS:
-                                    if str(debug_code) in str(cod_forn) or str(debug_code) in str(cod_ims):
-                                        add_debug_info(
-                                            debug_code,
-                                            "SUPPLIER_CODE_DETERMINATION",
-                                            f"Determined supplier code for DESENHO {row.get('DESENHO')}",
-                                            {
-                                                'AGRUPAMENTO': agrupamento,
-                                                'COD FORNECEDOR': cod_forn,
-                                                'COD IMS': cod_ims,
-                                                'Code that works': codigo_chave,
-                                                'Source': 'COD FORNECEDOR',
-                                                'Status': '✓ Found in BD_PN - will use COD FORNECEDOR for all lookups'
-                                            },
-                                            agrupamento=agrupamento
-                                        )
-                                        break
-                                return pd.Series({'WORKING_CODE': codigo_chave, 'CODE_SOURCE': 'COD_FORNECEDOR'})
-                        except (ValueError, TypeError):
-                            pass
-            
-            # Try COD IMS as fallback
+            # Try COD IMS first
             if pd.notna(cod_ims):
                 candidatos_ims = _normalizar_codigos_campo(cod_ims)
                 for codigo in candidatos_ims:
@@ -939,6 +956,37 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
                                         )
                                         break
                                 return pd.Series({'WORKING_CODE': codigo_chave, 'CODE_SOURCE': 'COD_IMS'})
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Try COD FORNECEDOR as fallback
+            if pd.notna(cod_forn):
+                candidatos_forn = _normalizar_codigos_campo(cod_forn)
+                for codigo in candidatos_forn:
+                    codigo_chave = _codigo_principal(codigo)
+                    if codigo_chave:
+                        try:
+                            codigo_num = float(codigo_chave)
+                            if codigo_num in mapa_fornecedores.index:
+                                # Found in BD_PN using COD FORNECEDOR
+                                for debug_code in DEBUG_SUPPLIERS:
+                                    if str(debug_code) in str(cod_forn) or str(debug_code) in str(cod_ims):
+                                        add_debug_info(
+                                            debug_code,
+                                            "SUPPLIER_CODE_DETERMINATION",
+                                            f"Determined supplier code for DESENHO {row.get('DESENHO')}",
+                                            {
+                                                'AGRUPAMENTO': agrupamento,
+                                                'COD FORNECEDOR': cod_forn,
+                                                'COD IMS': cod_ims,
+                                                'Code that works': codigo_chave,
+                                                'Source': 'COD FORNECEDOR',
+                                                'Status': '✓ Found in BD_PN - will use COD FORNECEDOR for all lookups'
+                                            },
+                                            agrupamento=agrupamento
+                                        )
+                                        break
+                                return pd.Series({'WORKING_CODE': codigo_chave, 'CODE_SOURCE': 'COD_FORNECEDOR'})
                         except (ValueError, TypeError):
                             pass
             
@@ -1619,21 +1667,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
 
     # If user forced a manual vehicle, override the template VEICULO column
-    if use_manual and manual_veiculo is not None:
-        try:
-            template['VEICULO'] = int(manual_veiculo)
-        except Exception:
-            template['VEICULO'] = manual_veiculo
-        # Try to persist the overridden Template Completo back into VIAJANTE.xlsx
-        try:
-            via_path = os.path.join(caminho_base, 'VIAJANTE.xlsx')
-            if os.path.exists(via_path):
-                out_template = template.copy()
-                with pd.ExcelWriter(via_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    out_template.to_excel(writer, sheet_name='Template Completo', index=False)
-        except Exception:
-            pass
-
+   
     # Resolve 'VEÍCULO' or 'VEICULO' column name
     veiculo_col = 'VEICULO' if 'VEICULO' in template.columns else ('VEÍCULO' if 'VEÍCULO' in template.columns else None)
 
@@ -1677,18 +1711,19 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
 
     dados_volume = []
 
-    # Group by combination of Supplier and Agrupamento to avoid merging different suppliers
-    group_cols = ['AGRUPAMENTO', 'DATA COLETA', 'COD IMS', 'COD FORNECEDOR', 'FORNECEDOR', 'PLANTA']
-    if 'TIPO SATURACAO' in template.columns:
-        group_cols.append('TIPO SATURACAO')
-    if veiculo_col:
-        group_cols.append(veiculo_col)
+    # Group by combination of Agrupamento, Data Coleta, Veículo and Planta.
+    # TIPO SATURACAO is not a grouping key to allow aggregation of different types into a single row.
+    group_cols = ['AGRUPAMENTO', 'DATA COLETA','VEÍCULO']
+    # Only add veiculo_col if it's distinct from existing group_cols
 
-    # We fillna to ensure groupby works properly on these columns
+    # We fillna and strip to ensure groupby works properly on these columns
     for col in group_cols:
+        if template[col].dtype == 'object':
+            template[col] = template[col].str.strip()
         template[col] = template[col].fillna('')
 
     grouped = template.groupby(group_cols)
+    
     
     for name, group in grouped:
         # name is a tuple matching group_cols
@@ -1698,16 +1733,55 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         peso_total = group['PESO TOTAL'].sum() if 'PESO TOTAL' in group.columns else 0
         embalagens_total = group['QTD EMBALAGENS'].sum() if 'QTD EMBALAGENS' in group.columns else 0
         
-        tipo_saturacao = group_dict.get('TIPO SATURACAO', 'VOLUME')
-        
-        if 'VOLUME' in str(tipo_saturacao).upper().strip():
+        # Determine saturation type for this aggregated group
+        use_volume_saturation_for_group = True # Default
+        tipo_saturacao_for_output = 'VOLUME'
+
+        # Priority 1: Check for LINEHAUL rule (if multiple rows and FLW is LINEHAUL, force VOLUME)
+        if 'FLW' in group.columns and len(group) > 1:
+            print("Determine type for line haul or more")
+            if group['FLW'].astype(str).str.strip().str.upper().eq('LINEHAUL').any():
+                use_volume_saturation_for_group = True
+                tipo_saturacao_for_output = 'VOLUME'
+            else:
+                # If multiple rows, but not LINEHAUL: "other remais as the they are"
+                # Determine based on the most frequent TIPO SATURACAO in the group
+                if 'TIPO SATURACAO' in group.columns and not group['TIPO SATURACAO'].dropna().empty:
+                    most_common_tipo = group['TIPO SATURACAO'].value_counts().idxmax()
+                    if 'PESO' in str(most_common_tipo).upper().strip():
+                        use_volume_saturation_for_group = False
+                        tipo_saturacao_for_output = 'PESO'
+                    else: # Default to VOLUME for other cases (e.g., if most_common_tipo is 'VOLUME' or unrecognized)
+                        use_volume_saturation_for_group = True
+                        tipo_saturacao_for_output = 'VOLUME'
+                # If TIPO SATURACAO column is not present or all NaN/empty, default to VOLUME
+                else:
+                    use_volume_saturation_for_group = True
+                    tipo_saturacao_for_output = 'VOLUME'
+        else: # Group has 1 row or 'FLW' column not present: "other remais as the they are"
+            # Determine based on the TIPO SATURACAO of the single row or the first row if FLW is not relevant
+            if 'TIPO SATURACAO' in group.columns and not group['TIPO SATURACAO'].dropna().empty:
+                single_row_tipo = group['TIPO SATURACAO'].dropna().iloc[0] # Take the first non-null
+                if 'PESO' in str(single_row_tipo).upper().strip():
+                    use_volume_saturation_for_group = False
+                    tipo_saturacao_for_output = 'PESO'
+                else:
+                    use_volume_saturation_for_group = True
+                    tipo_saturacao_for_output = 'VOLUME'
+            # Default to VOLUME if no TIPO SATURACAO column or no valid value.
+            else:
+                use_volume_saturation_for_group = True
+                tipo_saturacao_for_output = 'VOLUME'
+
+        if use_volume_saturation_for_group:
             saturacao_total = group['SAT VOLUME (%)'].sum() if 'SAT VOLUME (%)' in group.columns else 0
+            coluna_sat = 'SAT VOLUME (%)'
         else:
             saturacao_total = group['SAT PESO (%)'].sum() if 'SAT PESO (%)' in group.columns else 0
+            coluna_sat = 'SAT PESO (%)'
 
         # Calculate Apuração MDR
         total_desenhos = group['DESENHO'].nunique() if 'DESENHO' in group.columns else 0
-        coluna_sat = 'SAT VOLUME (%)' if 'VOLUME' in str(tipo_saturacao).upper().strip() else 'SAT PESO (%)'
         if coluna_sat in group.columns:
             desenhos_apurados = group[group[coluna_sat].fillna(0) > 0]['DESENHO'].nunique()
         else:
@@ -1726,20 +1800,28 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         except Exception:
             veiculo_display = veiculo_final
 
+        
+        # Get one reference COD IMS, COD FORNECEDOR, and FORNECEDOR from the group
+        # Prioritize non-null values
+        ref_cod_ims = group['COD IMS'].dropna().iloc[0] if not group['COD IMS'].dropna().empty else ''
+        ref_cod_fornecedor = group['COD FORNECEDOR'].dropna().iloc[0] if not group['COD FORNECEDOR'].dropna().empty else ''
+        ref_fornecedor_name = group['FORNECEDOR'].dropna().iloc[0] if not group['FORNECEDOR'].dropna().empty else ''
+        ref_plant = group['PLANTA'].dropna().iloc[0] if not group['PLANTA'].dropna().empty else ''
+
         dados_volume.append({
             'AGRUPAMENTO': group_dict.get('AGRUPAMENTO', ''),
             'DATA COLETA': group_dict.get('DATA COLETA', ''),
-            'COD IMS': group_dict.get('COD IMS', ''),
-            'COD FORNECEDOR': group_dict.get('COD FORNECEDOR', ''),
-            'FORNECEDOR': group_dict.get('FORNECEDOR', ''),
+            'COD IMS': ref_cod_ims,
+            'COD FORNECEDOR': ref_cod_fornecedor,
+            'FORNECEDOR': ref_fornecedor_name,
             'VEÍCULO': veiculo_display,
-            'TIPO DE SATURAÇÃO': tipo_saturacao,
+            'TIPO DE SATURAÇÃO': tipo_saturacao_for_output, # Changed here
             'SATURAÇÃO TOTAL': round(saturacao_total, 2),
             'M³': round(volume_total, 3),
             'PESO': round(peso_total, 1),
             'Embalagens': int(embalagens_total),
             'APURAÇÃO MDR': perc_mdr,
-            'PLANTA': group_dict.get('PLANTA', '')
+            'PLANTA': ref_plant
         })
 
     df_volume = pd.DataFrame(dados_volume)
