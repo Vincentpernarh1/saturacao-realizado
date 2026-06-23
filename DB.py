@@ -71,11 +71,15 @@ def get_latest_file(pattern, fallback=None):
 # You can use either COD IMS or COD FORNECEDOR (or both if a supplier has both codes)
 # Note: A single supplier can have BOTH COD IMS and COD FORNECEDOR
 # Example: Same supplier with COD IMS='33611' and COD FORNECEDOR='800030798'
-DEBUG_SUPPLIERS = ['12345','800002731']  # Add your supplier codes here to debug (e.g., ['33611', '800030798'])
+DEBUG_SUPPLIERS = []  # Add your supplier codes here to debug (e.g., ['33611', '800030798'])
 
 # Add AGRUPAMENTO codes to filter debug output (optional, leave empty to see all)
 # Example: DEBUG_AGRUPAMENTO = ['30956207']
-DEBUG_AGRUPAMENTO = ['30952101']  # Add AGRUPAMENTO codes to filter debug output
+DEBUG_AGRUPAMENTO = []  # Add AGRUPAMENTO codes to filter debug output
+
+# --- ADDED DEBUG CONFIGURATION FOR PNs ---
+DEBUG_PNS = []  # Add PN (DESENHO) codes to debug missing PNs/matches (e.g., ['12345678'])
+# -----------------------------------------
 
 # Global list to store debug information
 debug_info = []
@@ -576,7 +580,7 @@ def calcular_empilhamento_line_haul(df_saturacao, db_empilhamento):
 
                 total_empilhado = usadas_base + usadas_sobre
                 chave = f"{fornecedor}-{embal_base}-{embal_sobre}"
-               
+                
                 saturacao = total_empilhado / capacidade_veiculo
 
                 empilhamento_rows.append({
@@ -665,22 +669,7 @@ def calcular_empilhamento(df_saturacao, db_empilhamento):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=False,caminho_BD = 'BD'):
-
-
-
 
     def split_key_logic(code):
         """
@@ -902,6 +891,25 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # Filter out nan MDR values and use most recent (already sorted by DESENHO ATUALIZAÇÃO)
         db_PN_valid_mdr = db_PN[db_PN['MDR'].notna()]
         
+        # --- ADDED: PRINTING PN MATCHES TO THE DEBUG CONDITION ---
+        if DEBUG_PNS:
+            for debug_pn in DEBUG_PNS:
+                pn_str = str(debug_pn).strip()
+                print(f"\n[DEBUG PN] Verificando PN (DESENHO): {pn_str}")
+                in_template = template[template['DESENHO'].astype(str).str.strip() == pn_str]
+                if not in_template.empty:
+                    print(f"  -> Encontrado {len(in_template)} vez(es) no arquivo de demanda (Template).")
+                    in_db = db_PN_valid_mdr[db_PN_valid_mdr['DESENHO'].astype(str).str.strip() == pn_str]
+                    if not in_db.empty:
+                        print(f"  -> Encontrado no BD_CADASTRO_PN. Matches disponíveis:")
+                        for _, row_db in in_db.iterrows():
+                            print(f"     * Fornecedor: {row_db.get('COD FORNECEDOR', 'N/A')} | MDR: {row_db['MDR']} | Descrição: {row_db.get('DESCRIÇÃO', 'N/A')}")
+                    else:
+                        print(f"  -> ERRO: NÃO encontrado no BD_CADASTRO_PN (ou sem MDR válido). O PN não será mapeado para o Viajante!")
+                else:
+                    print(f"  -> Não encontrado nas demandas atuais do Template.")
+        # ---------------------------------------------------------
+
         template['MDR'] = template['DESENHO'].map(
             db_PN_valid_mdr.drop_duplicates('DESENHO', keep='first').set_index('DESENHO')['MDR']
         )
@@ -1011,6 +1019,11 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         
         # Determine which code works for each row
         template[['WORKING_CODE', 'CODE_SOURCE']] = template.apply(determine_supplier_code, axis=1)
+
+        # ---> ADDED THIS CRITICAL FIX <---
+        # Update COD FORNECEDOR to the confirmed WORKING_CODE so all downstream groupings (like df_saturacao) use the right ID
+        mask_valid_code = template['WORKING_CODE'].notna()
+        template.loc[mask_valid_code, 'COD FORNECEDOR'] = template.loc[mask_valid_code, 'WORKING_CODE'].apply(lambda x: str(int(float(x))) if pd.notna(x) else x)
         
         # Use the working code for FORNECEDOR mapping
         template['WORKING_CODE_NUMERIC'] = pd.to_numeric(template['WORKING_CODE'], errors='coerce')
@@ -1139,78 +1152,95 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         template['PESO TOTAL'] = round(template['PESO MAT'] + template['PESO MDR'], 1)
 
 
-
-        debug_fornecedor = ''
-        if 'COD FORNECEDOR' in template.columns:
-            debug_mask = template['COD FORNECEDOR'].apply(lambda valor: _campo_tem_codigo(valor, debug_fornecedor))
+        # ---> REWRITTEN THIS DEBUG MASK FIX <---
+        # The previous code had a hardcoded `debug_fornecedor = ''` which broke this print completely
+        debug_mask = pd.Series(False, index=template.index)
+        for debug_code in DEBUG_SUPPLIERS:
+            if 'COD FORNECEDOR' in template.columns:
+                debug_mask = debug_mask | template['COD FORNECEDOR'].astype(str).str.contains(str(debug_code))
             if 'COD IMS' in template.columns:
-                debug_mask = debug_mask | template['COD IMS'].apply(lambda valor: _campo_tem_codigo(valor, debug_fornecedor))
-            if debug_mask.any():
-                print(f"\n[DEBUG] Fornecedor {debug_fornecedor} - Template.xlsx")
-                for idx, dbg_row in template.loc[debug_mask].iterrows():
-                    # Volume info
-                    volume_mdr = volume_por_mdr.loc[idx]
-                    chave_volume = volume_lookup_chave.loc[idx]
-                    volume_txt = f"{float(volume_mdr):.3f}" if pd.notna(volume_mdr) else "N/A"
-                    qtd_emb = dbg_row['QTD EMBALAGENS']
-                    m3_txt = f"{float(dbg_row['M³']):.3f}" if pd.notna(dbg_row['M³']) else "N/A"
-                    
-                    # Build keys for display
-                    cod_ims = dbg_row.get('COD IMS')
-                    cod_forn = dbg_row.get('COD FORNECEDOR')
-                    key = dbg_row.get('KEY')
-                    candidatos = _normalizar_codigos_campo(cod_ims)
-                    if not candidatos:
-                        candidatos = _normalizar_codigos_campo(cod_forn)
-                    
-                    # QME key
-                    qme_key_used = f"{_codigo_principal(candidatos[0]) if candidatos else ''}|{key}" if key else "N/A"
-                    
-                    # PESO MATERIAL key (COD FORNECEDOR + KEY)
-                    peso_mat_key_used = f"{_codigo_principal(candidatos[0]) if candidatos else ''}|{key}" if key else "N/A"
-                    
-                    # Get PESO MATERIAL unit from PN file (using composite key)
-                    peso_mat_unit_pn = peso_material_unitario.loc[idx]
-                    peso_mat_unit_txt = f"{float(peso_mat_unit_pn):.4f}" if pd.notna(peso_mat_unit_pn) else "N/A"
-                    qtde = dbg_row['QTDE']
-                    peso_mat_calc = f"{qtde} x {peso_mat_unit_txt}" if pd.notna(peso_mat_unit_pn) else "N/A"
-                    peso_mat_result = f"{float(dbg_row['PESO MAT']):.1f}" if pd.notna(dbg_row['PESO MAT']) else "N/A"
-                    
-                    # Build PESO MDR key for display (COD FORNECEDOR + MDR)
-                    mdr = dbg_row.get('MDR')
-                    peso_mdr_key_used = _chave_fornecedor_mdr(candidatos[0] if candidatos else '', mdr)
-                    peso_mdr_unit = peso_mdr_por_embalagem.loc[idx]
-                    peso_mdr_unit_txt = f"{float(peso_mdr_unit):.2f}" if pd.notna(peso_mdr_unit) else "N/A"
-                    peso_mdr_calc = f"{qtd_emb} x {peso_mdr_unit_txt}" if pd.notna(peso_mdr_unit) else "N/A"
-                    peso_mdr_result = f"{float(dbg_row['PESO MDR']):.1f}" if pd.notna(dbg_row['PESO MDR']) else "N/A"
-                    
-                    # PESO TOTAL calculation
-                    peso_total_calc = f"{peso_mat_result} + {peso_mdr_result}"
-                    peso_total_result = f"{float(dbg_row['PESO TOTAL']):.1f}" if pd.notna(dbg_row['PESO TOTAL']) else "N/A"
-                    
-                    print(
-                        f"  VOLUME_KEY={chave_volume or _chave_fornecedor_mdr(dbg_row.get('COD IMS'), dbg_row.get('MDR'))} | "
-                        f"QME_KEY={qme_key_used} | PESO_MAT_KEY={peso_mat_key_used} | PESO_MDR_KEY={peso_mdr_key_used or 'N/A'}"
-                    )
-                    print(
-                        f"  DESENHO={dbg_row['DESENHO']} | MDR={dbg_row['MDR']} | QME={dbg_row['QME']} | QTDE={qtde}"
-                    )
-                    print(
-                        f"  VOLUME={volume_txt} | QTD_EMB={qtd_emb} | M³ = {qtd_emb} x {volume_txt} = {m3_txt}"
-                    )
-                    print(
-                        f"  PESO_MAT_UNIT_PN={peso_mat_unit_txt} kg | PESO_MAT = {peso_mat_calc} = {peso_mat_result} kg"
-                    )
-                    print(
-                        f"  PESO_MDR_UNIT={peso_mdr_unit_txt} kg | PESO_MDR = {peso_mdr_calc} = {peso_mdr_result} kg"
-                    )
-                    print(
-                        f"  PESO_TOTAL = {peso_total_calc} = {peso_total_result} kg"
-                    )
-                    print()
+                debug_mask = debug_mask | template['COD IMS'].astype(str).str.contains(str(debug_code))
+        
+        if DEBUG_PNS:
+            for dpn in DEBUG_PNS:
+                debug_mask = debug_mask | (template['DESENHO'].astype(str).str.strip() == str(dpn).strip())
+        
+        if debug_mask.any():
+            print(f"\n[DEBUG] Analisando linhas finais antes de salvar no Template.xlsx")
+            for idx, dbg_row in template.loc[debug_mask].iterrows():
+                # Volume info
+                volume_mdr = volume_por_mdr.loc[idx]
+                chave_volume = volume_lookup_chave.loc[idx]
+                volume_txt = f"{float(volume_mdr):.3f}" if pd.notna(volume_mdr) else "N/A"
+                qtd_emb = dbg_row['QTD EMBALAGENS']
+                m3_txt = f"{float(dbg_row['M³']):.3f}" if pd.notna(dbg_row['M³']) else "N/A"
+                
+                # Build keys for display
+                cod_ims = dbg_row.get('COD IMS')
+                cod_forn = dbg_row.get('COD FORNECEDOR')
+                key = dbg_row.get('KEY')
+                candidatos = _normalizar_codigos_campo(cod_ims)
+                if not candidatos:
+                    candidatos = _normalizar_codigos_campo(cod_forn)
+                
+                # QME key
+                qme_key_used = f"{_codigo_principal(candidatos[0]) if candidatos else ''}|{key}" if key else "N/A"
+                
+                # PESO MATERIAL key (COD FORNECEDOR + KEY)
+                peso_mat_key_used = f"{_codigo_principal(candidatos[0]) if candidatos else ''}|{key}" if key else "N/A"
+                
+                # Get PESO MATERIAL unit from PN file (using composite key)
+                peso_mat_unit_pn = peso_material_unitario.loc[idx]
+                peso_mat_unit_txt = f"{float(peso_mat_unit_pn):.4f}" if pd.notna(peso_mat_unit_pn) else "N/A"
+                qtde = dbg_row['QTDE']
+                peso_mat_calc = f"{qtde} x {peso_mat_unit_txt}" if pd.notna(peso_mat_unit_pn) else "N/A"
+                peso_mat_result = f"{float(dbg_row['PESO MAT']):.1f}" if pd.notna(dbg_row['PESO MAT']) else "N/A"
+                
+                # Build PESO MDR key for display (COD FORNECEDOR + MDR)
+                mdr = dbg_row.get('MDR')
+                peso_mdr_key_used = _chave_fornecedor_mdr(candidatos[0] if candidatos else '', mdr)
+                peso_mdr_unit = peso_mdr_por_embalagem.loc[idx]
+                peso_mdr_unit_txt = f"{float(peso_mdr_unit):.2f}" if pd.notna(peso_mdr_unit) else "N/A"
+                peso_mdr_calc = f"{qtd_emb} x {peso_mdr_unit_txt}" if pd.notna(peso_mdr_unit) else "N/A"
+                peso_mdr_result = f"{float(dbg_row['PESO MDR']):.1f}" if pd.notna(dbg_row['PESO MDR']) else "N/A"
+                
+                # PESO TOTAL calculation
+                peso_total_calc = f"{peso_mat_result} + {peso_mdr_result}"
+                peso_total_result = f"{float(dbg_row['PESO TOTAL']):.1f}" if pd.notna(dbg_row['PESO TOTAL']) else "N/A"
+                
+                print(
+                    f"  VOLUME_KEY={chave_volume or _chave_fornecedor_mdr(dbg_row.get('COD IMS'), dbg_row.get('MDR'))} | "
+                    f"QME_KEY={qme_key_used} | PESO_MAT_KEY={peso_mat_key_used} | PESO_MDR_KEY={peso_mdr_key_used or 'N/A'}"
+                )
+                print(
+                    f"  DESENHO={dbg_row['DESENHO']} | MDR={dbg_row['MDR']} | QME={dbg_row['QME']} | QTDE={qtde}"
+                )
+                print(
+                    f"  VOLUME={volume_txt} | QTD_EMB={qtd_emb} | M³ = {qtd_emb} x {volume_txt} = {m3_txt}"
+                )
+                print(
+                    f"  PESO_MAT_UNIT_PN={peso_mat_unit_txt} kg | PESO_MAT = {peso_mat_calc} = {peso_mat_result} kg"
+                )
+                print(
+                    f"  PESO_MDR_UNIT={peso_mdr_unit_txt} kg | PESO_MDR = {peso_mdr_calc} = {peso_mdr_result} kg"
+                )
+                print(
+                    f"  PESO_TOTAL = {peso_total_calc} = {peso_total_result} kg"
+                )
+                print()
 
         # Final cleanup: re-apply string normalisation in case any operation reintroduced floats
         if 'COD FORNECEDOR' in template.columns:
+            def _clean_cod_forn_template(val):
+                s = str(val).strip()
+                if s in ('nan', '', 'None'):
+                    return '0'
+                if '/' in s:
+                    return s
+                try:
+                    return str(int(float(s)))
+                except (ValueError, TypeError):
+                    return s
             template['COD FORNECEDOR'] = template['COD FORNECEDOR'].apply(_clean_cod_forn_template)
         
        
@@ -1228,8 +1258,8 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # --- Remove duplicates BEFORE calculations ---
         # Deduplicate after enrichment but before saturação calculations
         # This ensures all calculations (volume, peso, ocupação) are done on clean data
-        duplicates_before = len(template)
-        template = template.drop_duplicates(subset=['COD FORNECEDOR', 'PLANTA', 'DESENHO', 'QTDE']).reset_index(drop=True)
+       
+        template = template.drop_duplicates(subset=['AGRUPAMENTO', 'DATA COLETA', 'COD FORNECEDOR', 'PLANTA', 'DESENHO', 'QTDE', 'VEÍCULO', 'TIPO SATURACAO']).reset_index(drop=True)
     
        
         # --- Construção da aba Saturação ---
@@ -1340,7 +1370,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         df_saturacao['CAPACIDADE'] = df_saturacao.apply(obter_capacidade_por_linha, axis=1)
         df_saturacao['VEÍCULO'] = df_saturacao['VEÍCULO'].fillna(0)
         df_saturacao['VEÍCULO'] = df_saturacao['VEÍCULO'].astype(int)
-       
+        
         # Converte para numérico, tratando valores não numéricos
         df_saturacao['CAPACIDADE'] = pd.to_numeric(df_saturacao['CAPACIDADE'], errors='coerce')
         df_saturacao['CXS/PALLETS_TOTAL'] = pd.to_numeric(df_saturacao['CXS/PALLETS_TOTAL'], errors='coerce')
@@ -1413,8 +1443,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             mask = (df_sat['TOTAL DE CXS'].notna()) & (df_sat['TOTAL DE CXS'] > 0)
             df_sat.loc[mask, 'SATURAÇÃO_POR_MDR'] = df_sat.loc[mask, 'SATURAÇÃO_TOTAL'] / df_sat.loc[mask, 'TOTAL DE CXS']
             df_sat['SATURAÇÃO_POR_MDR'] = df_sat['SATURAÇÃO_POR_MDR'].replace([np.inf, -np.inf], np.nan).fillna(0)
-            
-            return df_sat
             
             return df_sat
 
@@ -1538,13 +1566,13 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         # --- Second deduplication check before Excel write ---
         # Safety check in case any operations after calculations reintroduced duplicates
         duplicates_before_write = len(template)
-        template = template.drop_duplicates(subset=['COD FORNECEDOR', 'PLANTA', 'DESENHO', 'QTDE']).reset_index(drop=True)
+        template = template.drop_duplicates(subset=['AGRUPAMENTO', 'DATA COLETA', 'COD FORNECEDOR', 'PLANTA', 'DESENHO', 'QTDE', 'VEÍCULO', 'TIPO SATURACAO']).reset_index(drop=True)
         duplicates_removed_write = duplicates_before_write - len(template)
         if duplicates_removed_write > 0:
             adicionar_erro(f"{duplicates_removed_write} linha(s) duplicada(s) removida(s) antes de salvar VIAJANTE", "INFO")
             print(f"[INFO] Removed {duplicates_removed_write} additional duplicates before Excel write")
         
-       
+        
         # --- Exporta para Excel formatado ---
         with pd.ExcelWriter('VIAJANTE.xlsx', engine='openpyxl') as writer:
             template.to_excel(writer, sheet_name='Template Completo', index=False)
@@ -1667,7 +1695,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
     template['FORNECEDOR'] = template['FORNECEDOR'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
 
     # If user forced a manual vehicle, override the template VEICULO column
-   
+    
     # Resolve 'VEÍCULO' or 'VEICULO' column name
     veiculo_col = 'VEICULO' if 'VEICULO' in template.columns else ('VEÍCULO' if 'VEÍCULO' in template.columns else None)
 
@@ -1825,40 +1853,50 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         })
 
     df_volume = pd.DataFrame(dados_volume)
+    df_volume = df_volume[df_volume[ 'SATURAÇÃO TOTAL' ] > 0]
+    df_volume_zeros = df_volume[df_volume[ 'SATURAÇÃO TOTAL' ] == 0 ]
     
-    # --- Save with blue header formatting and auto-width columns ---
+# --- Save with blue header formatting and auto-width columns ---
     with pd.ExcelWriter('Volume_por_rota.xlsx', engine='openpyxl') as writer:
+
         df_volume.to_excel(writer, sheet_name='Volume por Rota', index=False)
-        
-        ws = writer.sheets['Volume por Rota']
-        
-        header_fill = PatternFill(start_color='00246C', end_color='00246C', fill_type='solid')
+        df_volume_zeros.to_excel(writer, sheet_name='Saturação Nulos', index=False)
+
+        header_fill = PatternFill(
+            start_color='00246C',
+            end_color='00246C',
+            fill_type='solid'
+        )
         header_font = Font(bold=True, color='FFFFFF')
         header_align = Alignment(horizontal='center', vertical='center')
-        
-        for col_num, col in enumerate(ws.iter_cols(min_row=1, max_row=1), 1):
-            max_length = 0
-            column_letter = get_column_letter(col_num)
-            
-            header_cell = ws[f'{column_letter}1']
-            if header_cell.value:
-                max_length = len(str(header_cell.value))
-            
-            for row_num in range(2, min(102, ws.max_row + 1)):
-                cell = ws[f'{column_letter}{row_num}']
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
-            
-            header_cell.fill = header_fill
-            header_cell.font = header_font
-            header_cell.alignment = header_align
 
-    
-#tree = ttk.Treeview()
-#tree_resumo = ttk.Treeview()
+        # Apply formatting to both sheets
+        for sheet_name in ['Volume por Rota', 'Saturação Nulos']:
+
+            ws = writer.sheets[sheet_name]
+
+            for col_num, col in enumerate(ws.iter_cols(min_row=1, max_row=1), 1):
+
+                max_length = 0
+                column_letter = get_column_letter(col_num)
+
+                header_cell = ws[f'{column_letter}1']
+
+                if header_cell.value:
+                    max_length = len(str(header_cell.value))
+
+                for row_num in range(2, min(102, ws.max_row + 1)):
+                    cell = ws[f'{column_letter}{row_num}']
+
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+                header_cell.fill = header_fill
+                header_cell.font = header_font
+                header_cell.alignment = header_align
+    #tree = ttk.Treeview()
+    #tree_resumo = ttk.Treeview()
 #completar_informacoes(tree,3, tree_resumo)
-
-
