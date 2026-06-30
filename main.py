@@ -273,7 +273,7 @@ try:
 except Exception as e:
     print(f"Erro ao carregar imagem da carreta: {e}")
     caminhao_img = None
-janela.title("VIAJANTE")
+janela.title("SATURAÇÃO REALIZADA")
 janela.geometry("1400x700")
 janela.state('zoomed')
 janela.config(bg="#002855")
@@ -304,27 +304,10 @@ style.configure("Highlight.TButton", font=("Arial", 10, "bold"), background="#FF
                 foreground="#002855", padding=(12, 8), borderwidth=2, relief="raised")
 style.map("Highlight.TButton", background=[('active', '#FFD633'), ('!disabled', '#FFCC00')])
 
-# # Flechinha dropdown for sheet selection
-# Label(frame_controls, text="Flechinha:", font=("Arial", 10, "bold"), bg="#002855", fg="#FFCC00").pack(side=LEFT, padx=(0, 5))
-# flechinha_var = StringVar(value='')
-
-# # Configure style for Flechinha combobox with yellow background
-# style.configure('Flechinha.TCombobox', fieldbackground='#FFCC00', background='#FFCC00', foreground='#002855')
-# style.map('Flechinha.TCombobox', 
-#           fieldbackground=[('readonly', '#FFCC00')],
-#           selectbackground=[('readonly', '#FFCC00')],
-#           selectforeground=[('readonly', '#002855')],
-#           foreground=[('readonly', '#002855')])
-
-# flechinha_combo = ttk.Combobox(frame_controls, textvariable=flechinha_var, width=15, state='readonly', 
-#                                 font=("Arial", 10), style='Flechinha.TCombobox')
-# flechinha_combo['values'] = ['', 'Geral', 'Sábado', 'Domingo', 'Feriado']
-# flechinha_combo.pack(side=LEFT, padx=5)
-
 # Atualizar button
 btn_atualizar = ttk.Button(frame_controls, text="Atualizar Dados",
                            command=lambda: atualizar(), style="Highlight.TButton")
-btn_atualizar.pack(side=LEFT, padx=15)
+btn_atualizar.pack(side=RIGHT, padx=15)
 
 # Configure the dropdown list colors
 janela.option_add('*TCombobox*Listbox.background', '#FFCC00')
@@ -332,26 +315,30 @@ janela.option_add('*TCombobox*Listbox.foreground', '#002855')
 janela.option_add('*TCombobox*Listbox.selectBackground', '#FFD633')
 janela.option_add('*TCombobox*Listbox.selectForeground', '#002855')
 
-frame_caminhoes = Frame(frame_top,  bg="#002855")
-frame_caminhoes.grid(row=0, column=0, sticky='ne', padx=(480, 0))
-canvas_caminhoes = Canvas(frame_caminhoes, width=450, height=250,  bg="#002855", highlightthickness=0)
-canvas_caminhoes.pack()
 
 frame_resumo = Frame(frame_top, bg="#002855")
-frame_resumo.grid(row=0, column=1, sticky='nw', padx=(0, 10))
+frame_resumo.grid(row=0, column=1, sticky='w', padx=(0, 10))
 
-tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=6)
-tree_resumo.heading("Info", text="Info")
-tree_resumo.heading("Valor", text="Valor")
-tree_resumo.column("Info", width=140, anchor='center')
-tree_resumo.column("Valor", width=120, anchor='center')
 
-# Configure row height and font size for summary table
-style.configure("Treeview", rowheight=25, font=("Arial", 10))
+items = ["Ocupação Total", "Qtd Veículos", "Volume Total", "Peso Total", "Embalagens"]
 
-tree_resumo.pack()
-for item in ["Ocupação Total", "Qtd Veículos", "Volume Total", "Peso Total", "Embalagens"]:
-    tree_resumo.insert("", END, values=(item, ""))
+# Split items into groups of 2 per widget
+groups = [items[i:i+2] for i in range(0, len(items), 2)]
+
+for group in groups:
+    tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=2)
+    tree_resumo.heading("Info", text="Info")
+    tree_resumo.heading("Valor", text="Valor")
+    tree_resumo.column("Info", width=140, anchor='center')
+    tree_resumo.column("Valor", width=120, anchor='center')
+    tree_resumo.pack(side="left", padx=10)
+
+    for item in group:
+        tree_resumo.insert("", END, values=(item, ""))
+
+
+
+
 
 frame_bottom = Frame(frame_principal, bg="white")
 frame_bottom.pack(fill=BOTH, expand=True, padx=10, pady=(0, 0))
@@ -423,7 +410,7 @@ def atualizar():
             
             # Process data with database mappings
             completar_informacoes(
-                tree, default_veiculo, tree_resumo, canvas_caminhoes, caminhao_img, usar_manual=False
+                tree, default_veiculo, tree_resumo, caminhao_img, usar_manual=False
             )
 
             global original_tree_data

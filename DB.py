@@ -498,46 +498,46 @@ def _load_vehicle_mapping():
 
 
 
-def desenhar_caminhoes(canvas, ocupacao, caminhao_img):
-    canvas.delete("all")
+# def desenhar_caminhoes(canvas, ocupacao, caminhao_img):
+#     canvas.delete("all")
 
-    if caminhao_img is None:
-        return
+#     if caminhao_img is None:
+#         return
 
-    quad_por_caminhao = 35
-    quad_linha = 7
-    quad_coluna = 5
-    quad_largura = 14
-    quad_altura = 14
-    margem = 10
+#     quad_por_caminhao = 35
+#     quad_linha = 7
+#     quad_coluna = 5
+#     quad_largura = 14
+#     quad_altura = 14
+#     margem = 10
 
-    total_quads = ceil(ocupacao * quad_por_caminhao / 100)
-    max_caminhoes = 3
-    num_caminhoes = min((total_quads - 1) // quad_por_caminhao + 1, max_caminhoes)
+#     total_quads = ceil(ocupacao * quad_por_caminhao / 100)
+#     max_caminhoes = 3
+#     num_caminhoes = min((total_quads - 1) // quad_por_caminhao + 1, max_caminhoes)
 
-    for caminhao_idx in range(num_caminhoes):
-        # Posição em "grade" 2 acima, 1 abaixo
-        if caminhao_idx < 2:
-            x_offset = margem + caminhao_idx * 180  # lado a lado
-            y_offset = margem
-        else:
-            x_offset = margem + 90  # centraliza abaixo dos dois
-            y_offset = margem + 130
+#     for caminhao_idx in range(num_caminhoes):
+#         # Posição em "grade" 2 acima, 1 abaixo
+#         if caminhao_idx < 2:
+#             x_offset = margem + caminhao_idx * 180  # lado a lado
+#             y_offset = margem
+#         else:
+#             x_offset = margem + 90  # centraliza abaixo dos dois
+#             y_offset = margem + 130
 
-        canvas.create_image(x_offset + 12, y_offset + 17, image=caminhao_img, anchor=NW)
+#         canvas.create_image(x_offset + 12, y_offset + 17, image=caminhao_img, anchor=NW)
 
-        x_inicial_grade = x_offset + 50
-        y_inicial_grade = y_offset + 10
+#         x_inicial_grade = x_offset + 50
+#         y_inicial_grade = y_offset + 10
 
-        for i in range(quad_coluna):
-            for j in range(quad_linha):
-                idx = caminhao_idx * quad_por_caminhao + (quad_coluna - 1 - i) * quad_linha + j
-                x1 = x_inicial_grade + j * quad_largura
-                y1 = y_inicial_grade + i * quad_altura
-                x2 = x1 + quad_largura
-                y2 = y1 + quad_altura
-                cor = "#0070C0" if idx < total_quads else "#D9D9D9"
-                canvas.create_rectangle(x1, y1, x2, y2, fill=cor, outline='black')
+#         for i in range(quad_coluna):
+#             for j in range(quad_linha):
+#                 idx = caminhao_idx * quad_por_caminhao + (quad_coluna - 1 - i) * quad_linha + j
+#                 x1 = x_inicial_grade + j * quad_largura
+#                 y1 = y_inicial_grade + i * quad_altura
+#                 x2 = x1 + quad_largura
+#                 y2 = y1 + quad_altura
+#                 cor = "#0070C0" if idx < total_quads else "#D9D9D9"
+#                 canvas.create_rectangle(x1, y1, x2, y2, fill=cor, outline='black')
 
 
 
@@ -1503,7 +1503,6 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
             ("Qtd Veículos", qtd_veiculos),
             ("Volume Total", f"{volume:.1f} m³"),
             ("Peso Total", f"{peso:.1f} kg"),
-            #("Peso Máximo", f"{peso_maximo:.1f} kg"),
             ("Embalagens", int(embalagens) if np.isfinite(embalagens) else 0),
         ]
 
@@ -1561,7 +1560,7 @@ def completar_informacoes(tree, veiculo, tree_resumo, canvas_caminhoes, caminhao
         for _, row in template.iterrows():
             tree.insert("", END, values=list(row))
 
-        desenhar_caminhoes(canvas_caminhoes, ocupacao, caminhao_img)
+        # desenhar_caminhoes(canvas_caminhoes, ocupacao, caminhao_img)
         
         # --- Second deduplication check before Excel write ---
         # Safety check in case any operations after calculations reintroduced duplicates
@@ -1835,6 +1834,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         ref_cod_fornecedor = group['COD FORNECEDOR'].dropna().iloc[0] if not group['COD FORNECEDOR'].dropna().empty else ''
         ref_fornecedor_name = group['FORNECEDOR'].dropna().iloc[0] if not group['FORNECEDOR'].dropna().empty else ''
         ref_plant = group['PLANTA'].dropna().iloc[0] if not group['PLANTA'].dropna().empty else ''
+        
 
         dados_volume.append({
             'AGRUPAMENTO': group_dict.get('AGRUPAMENTO', ''),
@@ -1844,7 +1844,7 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
             'FORNECEDOR': ref_fornecedor_name,
             'VEÍCULO': veiculo_display,
             'TIPO DE SATURAÇÃO': tipo_saturacao_for_output, # Changed here
-            'SATURAÇÃO TOTAL': round(saturacao_total, 2),
+            'SATURAÇÃO TOTAL': 100 if saturacao_total> 100 else round(saturacao_total, 2),
             'M³': round(volume_total, 3),
             'PESO': round(peso_total, 1),
             'Embalagens': int(embalagens_total),
@@ -1853,8 +1853,9 @@ def consolidar_dados(use_manual=False, manual_veiculo=None):
         })
 
     df_volume = pd.DataFrame(dados_volume)
-    df_volume = df_volume[df_volume[ 'SATURAÇÃO TOTAL' ] > 0]
     df_volume_zeros = df_volume[df_volume[ 'SATURAÇÃO TOTAL' ] == 0 ]
+    df_volume = df_volume[df_volume[ 'SATURAÇÃO TOTAL' ] > 0]
+   
     
 # --- Save with blue header formatting and auto-width columns ---
     with pd.ExcelWriter('Volume_por_rota.xlsx', engine='openpyxl') as writer:
