@@ -285,7 +285,7 @@ frame_top = Frame(frame_principal, bg="#002855")
 frame_top.pack(fill=X, padx=10, pady=5)
 
 # Configure grid columns for proper spacing
-frame_top.grid_columnconfigure(0, weight=0, minsize=500)
+frame_top.grid_columnconfigure(0, weight=0, minsize=450)
 frame_top.grid_columnconfigure(1, weight=1, minsize=360)
 frame_top.grid_columnconfigure(2, weight=0)
 
@@ -307,7 +307,7 @@ style.map("Highlight.TButton", background=[('active', '#FFD633'), ('!disabled', 
 # Atualizar button
 btn_atualizar = ttk.Button(frame_controls, text="Atualizar Dados",
                            command=lambda: atualizar(), style="Highlight.TButton")
-btn_atualizar.pack(side=RIGHT, padx=15)
+btn_atualizar.pack(side=LEFT, padx=15)
 
 # Configure the dropdown list colors
 janela.option_add('*TCombobox*Listbox.background', '#FFCC00')
@@ -329,15 +329,12 @@ for group in groups:
     tree_resumo = ttk.Treeview(frame_resumo, columns=("Info", "Valor"), show="headings", height=2)
     tree_resumo.heading("Info", text="Info")
     tree_resumo.heading("Valor", text="Valor")
-    tree_resumo.column("Info", width=140, anchor='center')
+    tree_resumo.column("Info", width=120, anchor='center')
     tree_resumo.column("Valor", width=120, anchor='center')
     tree_resumo.pack(side="left", padx=10)
 
     for item in group:
         tree_resumo.insert("", END, values=(item, ""))
-
-
-
 
 
 frame_bottom = Frame(frame_principal, bg="white")
